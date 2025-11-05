@@ -15,6 +15,7 @@ export const MirrorChat = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
+  const isRecordingRef = useRef(false);
 
   // Check if speech recognition is supported
   const isSpeechSupported = typeof window !== "undefined" && 
@@ -24,6 +25,11 @@ export const MirrorChat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Keep isRecordingRef in sync
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
   // Initialize speech recognition
   useEffect(() => {
     if (!isSpeechSupported) return;
@@ -31,7 +37,7 @@ export const MirrorChat = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
@@ -65,7 +71,16 @@ export const MirrorChat = () => {
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
+      // Auto-restart if still in recording mode
+      if (isRecordingRef.current) {
+        setTimeout(() => {
+          try {
+            recognitionRef.current?.start();
+          } catch (_) {
+            // Ignore "already started" errors
+          }
+        }, 150);
+      }
     };
 
     recognitionRef.current = recognition;
@@ -75,7 +90,7 @@ export const MirrorChat = () => {
         recognitionRef.current.abort();
       }
     };
-  }, [isSpeechSupported]);
+  }, [isSpeechSupported, baseInput]);
 
   const streamChat = async (userMessage: string) => {
     const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mirror-chat`;
@@ -211,21 +226,26 @@ export const MirrorChat = () => {
   };
 
   const toggleVoiceInput = () => {
-    if (!isSpeechSupported) {
-      toast.error("Voice input not supported in this browser.");
+    if (!isSpeechSupported || isLoading) {
+      if (!isSpeechSupported) {
+        toast.error("Voice input not supported in this browser.");
+      }
       return;
     }
 
     if (isRecording) {
-      recognitionRef.current?.stop();
+      // Stop recording mode
       setIsRecording(false);
+      recognitionRef.current?.stop();
     } else {
+      // Start recording mode
       try {
         setBaseInput(input);
-        recognitionRef.current?.start();
         setIsRecording(true);
+        recognitionRef.current?.start();
       } catch (error) {
         console.error("Failed to start recognition:", error);
+        setIsRecording(false);
         toast.error("Voice input failed. Try again or type instead.");
       }
     }
