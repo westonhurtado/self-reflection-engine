@@ -10,7 +10,7 @@ const Index = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "WECKY") {
+    if (password === "what is your greatest fear") {
       setIsAuthenticated(true);
       setError(false);
     } else {
