@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Send, Mic, MicOff } from "lucide-react";
+import { Send, Mic } from "lucide-react";
 import { toast } from "sonner";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -11,6 +11,7 @@ export const MirrorChat = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [baseInput, setBaseInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -31,15 +32,25 @@ export const MirrorChat = () => {
     const recognition = new SpeechRecognition();
     
     recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.lang = "en-US";
 
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setInput((prev) => {
-        const needsSpace = prev.length > 0 && !prev.endsWith(" ");
-        return prev + (needsSpace ? " " : "") + transcript;
-      });
+      let finalTranscript = "";
+      let interimTranscript = "";
+
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0].transcript;
+        if (result.isFinal) {
+          finalTranscript += text;
+        } else {
+          interimTranscript += text;
+        }
+      }
+
+      const combined = (baseInput ? baseInput + " " : "") + finalTranscript + interimTranscript;
+      setInput(combined.trimStart());
     };
 
     recognition.onerror = (event: any) => {
@@ -210,6 +221,7 @@ export const MirrorChat = () => {
       setIsRecording(false);
     } else {
       try {
+        setBaseInput(input);
         recognitionRef.current?.start();
         setIsRecording(true);
       } catch (error) {
@@ -305,12 +317,12 @@ export const MirrorChat = () => {
               size="icon"
               className={`h-[52px] w-[52px] rounded-xl transition-all duration-300 ${
                 isRecording 
-                  ? "bg-mirror-glow text-mirror-depth animate-pulse" 
+                  ? "bg-mirror-glow text-mirror-depth" 
                   : "bg-mirror-surface/80 text-text-primary hover:bg-mirror-surface border border-border"
               }`}
               title={isSpeechSupported ? "Tap to speak" : "Voice input not supported"}
             >
-              {isRecording ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              <Mic className="h-5 w-5" />
             </Button>
             <Button
               type="submit"
