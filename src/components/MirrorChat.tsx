@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Send } from "lucide-react";
+import { Send, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -10,12 +10,61 @@ export const MirrorChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Check if speech recognition is supported
+  const isSpeechSupported = typeof window !== "undefined" && 
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (!isSpeechSupported) return;
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput((prev) => {
+        const needsSpace = prev.length > 0 && !prev.endsWith(" ");
+        return prev + (needsSpace ? " " : "") + transcript;
+      });
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      setIsRecording(false);
+      
+      if (event.error === "not-allowed") {
+        toast.error("Microphone access denied. Please enable it in your browser settings.");
+      } else if (event.error !== "aborted") {
+        toast.error("Voice input failed. Try again or type instead.");
+      }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, [isSpeechSupported]);
 
   const streamChat = async (userMessage: string) => {
     const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mirror-chat`;
@@ -150,6 +199,26 @@ export const MirrorChat = () => {
     }
   };
 
+  const toggleVoiceInput = () => {
+    if (!isSpeechSupported) {
+      toast.error("Voice input not supported in this browser.");
+      return;
+    }
+
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+    } else {
+      try {
+        recognitionRef.current?.start();
+        setIsRecording(true);
+      } catch (error) {
+        console.error("Failed to start recognition:", error);
+        toast.error("Voice input failed. Try again or type instead.");
+      }
+    }
+  };
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -224,9 +293,25 @@ export const MirrorChat = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Speak your truth..."
-              className="min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl"
+              className={`min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl transition-all ${
+                isRecording ? "ring-2 ring-mirror-glow/70" : ""
+              }`}
               disabled={isLoading}
             />
+            <Button
+              type="button"
+              onClick={toggleVoiceInput}
+              disabled={!isSpeechSupported || isLoading}
+              size="icon"
+              className={`h-[52px] w-[52px] rounded-xl transition-all duration-300 ${
+                isRecording 
+                  ? "bg-mirror-glow text-mirror-depth animate-pulse" 
+                  : "bg-mirror-surface/80 text-text-primary hover:bg-mirror-surface border border-border"
+              }`}
+              title={isSpeechSupported ? "Tap to speak" : "Voice input not supported"}
+            >
+              {isRecording ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+            </Button>
             <Button
               type="submit"
               disabled={!input.trim() || isLoading}
