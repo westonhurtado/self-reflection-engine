@@ -90,6 +90,10 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
       setIntensity(Math.min(text.length / 60, 1));
     },
     onError: (kind) => {
+      if (kind === null) {
+        setError(null);
+        return;
+      }
       if (kind === "denied") {
         setError(
           "Microphone access was denied. Enable it in your browser settings, then reopen conversation mode."
@@ -99,11 +103,17 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
         setError("This browser doesn't support speech recognition.");
         setOrbState("muted");
       } else {
-        setError("Listening was interrupted. Tap the orb to continue.");
+        setError("Listening stopped. Tap the orb to continue.");
         setOrbState("muted");
       }
     },
   });
+
+  // Reflect real recognition state: once it's running again, show Listening.
+  useEffect(() => {
+    if (!activeRef.current || busyRef.current) return;
+    if (recognition.listening && !error) setOrbState("listening");
+  }, [recognition.listening, error]);
 
   const { supported, listening, start, stop } = recognition;
   controlsRef.current = { start, stop };
