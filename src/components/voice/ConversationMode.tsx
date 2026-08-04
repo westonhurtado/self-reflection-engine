@@ -33,6 +33,10 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
   const activeRef = useRef(true);
   const lastSentRef = useRef("");
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<{ start: () => void; stop: () => void }>({
+    start: () => {},
+    stop: () => {},
+  });
 
   const { speak, cancel: cancelSpeech } = useSpeechSynthesis();
 
@@ -48,7 +52,7 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
       setInterim("");
       setOrbState("finishing");
       // Never let the mirror hear itself.
-      recognition.stop();
+      controlsRef.current.stop();
 
       setTimeout(() => {
         if (activeRef.current && busyRef.current) setOrbState("reflecting");
@@ -64,7 +68,7 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
       if (!reply) {
         busyRef.current = false;
         setOrbState("listening");
-        recognition.start();
+        controlsRef.current.start();
         return;
       }
 
@@ -73,10 +77,9 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
         busyRef.current = false;
         if (!activeRef.current) return;
         setOrbState("listening");
-        recognition.start();
+        controlsRef.current.start();
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [onSend, speak]
   );
 
@@ -103,6 +106,7 @@ export const ConversationMode = ({ messages, onSend, onClose }: Props) => {
   });
 
   const { supported, listening, start, stop } = recognition;
+  controlsRef.current = { start, stop };
 
   // Enter conversation mode: begin listening immediately.
   useEffect(() => {
