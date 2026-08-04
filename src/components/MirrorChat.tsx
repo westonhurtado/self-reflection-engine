@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Send, Mic, MicOff } from "lucide-react";
+import { Send, AudioLines } from "lucide-react";
 import { toast } from "sonner";
+import { ConversationMode } from "./voice/ConversationMode";
+import { isSpeechRecognitionSupported } from "@/hooks/useSpeechRecognition";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -10,24 +12,12 @@ export const MirrorChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState("");
+  const [conversationMode, setConversationMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const voiceModeRef = useRef(false);
   const messagesRef = useRef<Message[]>([]);
-  const finalTranscriptRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const busyRef = useRef(false);
 
-  // Check if the browser supports the native speech APIs
-  const isSpeechSupported =
-    typeof window !== "undefined" &&
-    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) &&
-    "speechSynthesis" in window;
+  const isSpeechSupported = isSpeechRecognitionSupported;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
