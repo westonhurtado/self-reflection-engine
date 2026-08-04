@@ -9,12 +9,13 @@ type Options = {
   onInterim?: (text: string) => void;
   /** Called when speech is detected while listening. */
   onSpeechActivity?: () => void;
-  onError?: (kind: RecognitionErrorKind) => void;
+  onError?: (kind: RecognitionErrorKind | null) => void;
   /** Silence in ms before the transcript is finalized. */
   silenceMs?: number;
 };
 
-const MAX_RESTARTS = 8;
+/** Only consecutive failed restarts (no speech activity in between) count toward this. */
+const MAX_CONSECUTIVE_FAILURES = 12;
 
 export const isSpeechRecognitionSupported =
   typeof window !== "undefined" &&
@@ -36,9 +37,11 @@ export function useSpeechRecognition({
 
   const recognitionRef = useRef<any>(null);
   const wantListeningRef = useRef(false);
+  const runningRef = useRef(false);
   const finalRef = useRef("");
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const restartsRef = useRef(0);
+  const failuresRef = useRef(0);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cbs = useRef({ onFinal, onInterim, onSpeechActivity, onError });
   cbs.current = { onFinal, onInterim, onSpeechActivity, onError };
@@ -61,8 +64,9 @@ export function useSpeechRecognition({
     recognition.lang = "en-US";
 
     recognition.onstart = () => {
+      runningRef.current = true;
       setListening(true);
-      restartsRef.current = 0;
+      cbs.current.onError?.(null);
     };
 
     recognition.onresult = (event: any) => {
@@ -78,7 +82,10 @@ export function useSpeechRecognition({
       }
 
       const live = `${finalRef.current} ${interim}`.trim();
-      if (live) cbs.current.onSpeechActivity?.();
+      if (live) {
+        failuresRef.current = 0;
+        cbs.current.onSpeechActivity?.();
+      }
       cbs.current.onInterim?.(live);
 
       clearSilenceTimer();
@@ -95,38 +102,42 @@ export function useSpeechRecognition({
       const err = event?.error;
       if (err === "not-allowed" || err === "service-not-allowed") {
         wantListeningRef.current = false;
+        runningRef.current = false;
         setListening(false);
         cbs.current.onError?.("denied");
         return;
       }
-      if (err === "aborted" || err === "no-speech") return;
-      cbs.current.onError?.("error");
+      // Recoverable / routine: let onend handle the automatic restart silently.
     };
 
     recognition.onend = () => {
+      runningRef.current = false;
       setListening(false);
       if (!wantListeningRef.current) return;
-      if (restartsRef.current >= MAX_RESTARTS) {
+      if (failuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
         wantListeningRef.current = false;
         cbs.current.onError?.("error");
         return;
       }
-      restartsRef.current += 1;
-      setTimeout(() => {
-        if (!wantListeningRef.current) return;
+      failuresRef.current += 1;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = setTimeout(() => {
+        if (!wantListeningRef.current || runningRef.current) return;
         try {
           recognition.start();
         } catch {
           /* already started */
         }
-      }, 250);
+      }, 350);
     };
 
     recognitionRef.current = recognition;
 
     return () => {
       wantListeningRef.current = false;
+      runningRef.current = false;
       clearSilenceTimer();
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       recognition.onend = null;
       recognition.onresult = null;
       recognition.onerror = null;
@@ -145,8 +156,9 @@ export function useSpeechRecognition({
       return;
     }
     wantListeningRef.current = true;
-    restartsRef.current = 0;
+    failuresRef.current = 0;
     finalRef.current = "";
+    if (runningRef.current) return;
     try {
       recognitionRef.current.start();
     } catch {
@@ -157,12 +169,14 @@ export function useSpeechRecognition({
   const stop = useCallback(() => {
     wantListeningRef.current = false;
     clearSilenceTimer();
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
     finalRef.current = "";
     try {
       recognitionRef.current?.abort();
     } catch {
       /* noop */
     }
+    runningRef.current = false;
     setListening(false);
   }, [clearSilenceTimer]);
 
