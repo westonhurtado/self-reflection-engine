@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Send, Mic, MicOff } from "lucide-react";
+import { Send, AudioLines } from "lucide-react";
 import { toast } from "sonner";
+import { ConversationMode } from "./voice/ConversationMode";
+import { isSpeechRecognitionSupported } from "@/hooks/useSpeechRecognition";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -10,24 +12,12 @@ export const MirrorChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState("");
+  const [conversationMode, setConversationMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const voiceModeRef = useRef(false);
   const messagesRef = useRef<Message[]>([]);
-  const finalTranscriptRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const busyRef = useRef(false);
 
-  // Check if the browser supports the native speech APIs
-  const isSpeechSupported =
-    typeof window !== "undefined" &&
-    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) &&
-    "speechSynthesis" in window;
+  const isSpeechSupported = isSpeechRecognitionSupported;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -165,180 +155,14 @@ export const MirrorChat = () => {
     [streamChat]
   );
 
-  /* ---------- Voice conversation mode ---------- */
-
-  const stopSpeaking = useCallback(() => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-    setIsSpeaking(false);
-  }, []);
-
-  const startListening = useCallback(() => {
-    if (!voiceModeRef.current) return;
-    try {
-      recognitionRef.current?.start();
-    } catch (_) {
-      /* already started */
-    }
-  }, []);
-
-  const speak = useCallback(
-    (text: string) => {
-      if (!voiceModeRef.current || !text.trim()) {
-        startListening();
-        return;
-      }
-      const synth = window.speechSynthesis;
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.onstart = () => setIsSpeaking(true);
-      const finish = () => {
-        setIsSpeaking(false);
-        busyRef.current = false;
-        startListening();
-      };
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      // Listen while speaking so the user can interrupt (barge-in)
-      startListening();
-      synth.speak(utterance);
-    },
-    [startListening]
-  );
-
-  const submitVoiceTurn = useCallback(async () => {
-    const text = finalTranscriptRef.current.trim();
-    finalTranscriptRef.current = "";
-    setLiveTranscript("");
-    if (!text || busyRef.current) return;
-
-    busyRef.current = true;
-    stopSpeaking();
-    const reply = await sendMessage(text);
-    if (!voiceModeRef.current) {
-      busyRef.current = false;
-      return;
-    }
-    if (reply) {
-      speak(reply);
-    } else {
-      busyRef.current = false;
-      startListening();
-    }
-  }, [sendMessage, speak, startListening, stopSpeaking]);
-
-  // Initialize speech recognition
-  useEffect(() => {
-    if (!isSpeechSupported) return;
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    recognition.onstart = () => setIsListening(true);
-
-    recognition.onresult = (event: any) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        const text = result[0].transcript;
-        if (result.isFinal) {
-          finalTranscriptRef.current = (finalTranscriptRef.current + " " + text).trim();
-        } else {
-          interim += text;
-        }
-      }
-
-      // Barge-in: the user started talking while the mirror was speaking
-      if ((interim.trim() || finalTranscriptRef.current) && window.speechSynthesis.speaking) {
-        stopSpeaking();
-        busyRef.current = false;
-      }
-
-      setLiveTranscript((finalTranscriptRef.current + " " + interim).trim());
-
-      // Auto-send after a short silence
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => {
-        if (voiceModeRef.current) submitVoiceTurn();
-      }, 1200);
-    };
-
-    recognition.onerror = (event: any) => {
-      if (event.error === "not-allowed") {
-        voiceModeRef.current = false;
-        setVoiceMode(false);
-        setIsListening(false);
-        toast.error("Microphone access denied. Please enable it in your browser settings.");
-      } else if (event.error !== "aborted" && event.error !== "no-speech") {
-        console.error("Speech recognition error:", event.error);
-      }
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      if (voiceModeRef.current) {
-        setTimeout(() => {
-          if (voiceModeRef.current) {
-            try {
-              recognitionRef.current?.start();
-            } catch (_) {
-              /* ignore */
-            }
-          }
-        }, 200);
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      recognitionRef.current?.abort();
-    };
-  }, [isSpeechSupported, stopSpeaking, submitVoiceTurn]);
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      voiceModeRef.current = false;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
-
-  const toggleVoiceMode = () => {
+  const openConversationMode = () => {
     if (!isSpeechSupported) {
       toast.error("Voice conversation isn't supported in this browser.");
       return;
     }
-
-    if (voiceModeRef.current) {
-      voiceModeRef.current = false;
-      setVoiceMode(false);
-      setLiveTranscript("");
-      finalTranscriptRef.current = "";
-      busyRef.current = false;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      stopSpeaking();
-      recognitionRef.current?.abort();
-      setIsListening(false);
-    } else {
-      voiceModeRef.current = true;
-      setVoiceMode(true);
-      finalTranscriptRef.current = "";
-      setLiveTranscript("");
-      startListening();
-    }
+    setConversationMode(true);
   };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -422,37 +246,6 @@ export const MirrorChat = () => {
 
       {/* Input */}
       <div className="border-t border-border bg-mirror-surface/50 backdrop-blur-sm p-6">
-        {voiceMode && (
-          <div className="max-w-4xl mx-auto mb-4 flex items-center gap-4 animate-in fade-in">
-            <div className="relative flex items-center justify-center w-10 h-10 shrink-0">
-              {isSpeaking ? (
-                <div className="flex items-end gap-1 h-6">
-                  {[0, 1, 2, 3].map((i) => (
-                    <span
-                      key={i}
-                      className="w-1 h-6 rounded-full bg-mirror-glow origin-bottom animate-voice-bar"
-                      style={{ animationDelay: `${i * 0.12}s` }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <>
-                  <span className="absolute inset-0 rounded-full bg-mirror-glow/30 animate-voice-ring" />
-                  <span
-                    className="absolute inset-0 rounded-full bg-mirror-glow/30 animate-voice-ring"
-                    style={{ animationDelay: "0.9s" }}
-                  />
-                  <span className="relative w-3 h-3 rounded-full bg-mirror-glow" />
-                </>
-              )}
-            </div>
-            <p className="text-sm text-text-secondary font-light truncate">
-              {isSpeaking
-                ? "Speaking..."
-                : liveTranscript || (isListening ? "Listening..." : "Starting...")}
-            </p>
-          </div>
-        )}
         <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
           <div className="flex gap-3 items-end">
             <Textarea
@@ -461,30 +254,22 @@ export const MirrorChat = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Speak your truth..."
-              className={`min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl transition-all ${
-                voiceMode ? "ring-2 ring-mirror-glow/70" : ""
-              }`}
+              className="min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl transition-all"
               disabled={isLoading}
             />
             <Button
               type="button"
-              onClick={toggleVoiceMode}
+              onClick={openConversationMode}
               disabled={!isSpeechSupported}
               size="icon"
-              className={`h-[52px] w-[52px] rounded-xl transition-all duration-300 ${
-                voiceMode
-                  ? "bg-mirror-glow text-mirror-depth"
-                  : "bg-mirror-surface/80 text-text-primary hover:bg-mirror-surface border border-border"
-              }`}
+              className="h-[52px] w-[52px] rounded-xl border border-border bg-mirror-surface/80 text-text-primary transition-all duration-300 hover:bg-mirror-surface"
               title={
                 isSpeechSupported
-                  ? voiceMode
-                    ? "End voice conversation"
-                    : "Start voice conversation"
+                  ? "Start voice conversation"
                   : "Voice conversation not supported in this browser"
               }
             >
-              {voiceMode ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              <AudioLines className="h-5 w-5" />
             </Button>
             <Button
               type="submit"
@@ -497,6 +282,14 @@ export const MirrorChat = () => {
           </div>
         </form>
       </div>
+
+      {conversationMode && (
+        <ConversationMode
+          messages={messages}
+          onSend={sendMessage}
+          onClose={() => setConversationMode(false)}
+        />
+      )}
     </div>
   );
 };
