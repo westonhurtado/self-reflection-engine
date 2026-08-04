@@ -73,6 +73,27 @@ export default {
           "0%, 100%": { transform: "scaleY(0.35)" },
           "50%": { transform: "scaleY(1)" },
         },
+        "orb-breathe": {
+          "0%, 100%": { transform: "scale(1)", opacity: "0.92" },
+          "50%": { transform: "scale(1.06)", opacity: "1" },
+        },
+        "orb-pulse": {
+          "0%, 100%": { transform: "scale(1)", opacity: "0.9" },
+          "35%": { transform: "scale(1.09)", opacity: "1" },
+          "65%": { transform: "scale(1.02)", opacity: "0.96" },
+        },
+        "orb-drift": {
+          "0%, 100%": { transform: "scale(0.97) rotate(0deg)", opacity: "0.8" },
+          "50%": { transform: "scale(1.03) rotate(8deg)", opacity: "1" },
+        },
+        "orb-halo": {
+          "0%, 100%": { transform: "scale(0.95)", opacity: "0.35" },
+          "50%": { transform: "scale(1.12)", opacity: "0.7" },
+        },
+        "orb-ripple": {
+          "0%": { transform: "scale(0.9)", opacity: "0.55" },
+          "100%": { transform: "scale(1.45)", opacity: "0" },
+        },
         "accordion-down": {
           from: {
             height: "0",
@@ -93,6 +114,11 @@ export default {
       animation: {
         "voice-ring": "voice-ring 1.8s ease-out infinite",
         "voice-bar": "voice-bar 0.9s ease-in-out infinite",
+        "orb-breathe": "orb-breathe 4s ease-in-out infinite",
+        "orb-pulse": "orb-pulse 1.6s ease-in-out infinite",
+        "orb-drift": "orb-drift 6s ease-in-out infinite",
+        "orb-halo": "orb-halo 5s ease-in-out infinite",
+        "orb-ripple": "orb-ripple 2.4s ease-out infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
       },
