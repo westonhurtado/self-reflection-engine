@@ -65,6 +65,14 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       keyframes: {
+        "voice-ring": {
+          "0%": { transform: "scale(0.85)", opacity: "0.6" },
+          "100%": { transform: "scale(1.6)", opacity: "0" },
+        },
+        "voice-bar": {
+          "0%, 100%": { transform: "scaleY(0.35)" },
+          "50%": { transform: "scaleY(1)" },
+        },
         "accordion-down": {
           from: {
             height: "0",
@@ -83,6 +91,8 @@ export default {
         },
       },
       animation: {
+        "voice-ring": "voice-ring 1.8s ease-out infinite",
+        "voice-bar": "voice-bar 0.9s ease-in-out infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
       },
