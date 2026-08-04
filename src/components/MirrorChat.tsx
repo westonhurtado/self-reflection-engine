@@ -246,37 +246,6 @@ export const MirrorChat = () => {
 
       {/* Input */}
       <div className="border-t border-border bg-mirror-surface/50 backdrop-blur-sm p-6">
-        {voiceMode && (
-          <div className="max-w-4xl mx-auto mb-4 flex items-center gap-4 animate-in fade-in">
-            <div className="relative flex items-center justify-center w-10 h-10 shrink-0">
-              {isSpeaking ? (
-                <div className="flex items-end gap-1 h-6">
-                  {[0, 1, 2, 3].map((i) => (
-                    <span
-                      key={i}
-                      className="w-1 h-6 rounded-full bg-mirror-glow origin-bottom animate-voice-bar"
-                      style={{ animationDelay: `${i * 0.12}s` }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <>
-                  <span className="absolute inset-0 rounded-full bg-mirror-glow/30 animate-voice-ring" />
-                  <span
-                    className="absolute inset-0 rounded-full bg-mirror-glow/30 animate-voice-ring"
-                    style={{ animationDelay: "0.9s" }}
-                  />
-                  <span className="relative w-3 h-3 rounded-full bg-mirror-glow" />
-                </>
-              )}
-            </div>
-            <p className="text-sm text-text-secondary font-light truncate">
-              {isSpeaking
-                ? "Speaking..."
-                : liveTranscript || (isListening ? "Listening..." : "Starting...")}
-            </p>
-          </div>
-        )}
         <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
           <div className="flex gap-3 items-end">
             <Textarea
@@ -285,30 +254,22 @@ export const MirrorChat = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Speak your truth..."
-              className={`min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl transition-all ${
-                voiceMode ? "ring-2 ring-mirror-glow/70" : ""
-              }`}
+              className="min-h-[52px] max-h-32 resize-none bg-background/50 border-border text-text-primary placeholder:text-text-muted focus-visible:ring-mirror-glow/50 rounded-xl transition-all"
               disabled={isLoading}
             />
             <Button
               type="button"
-              onClick={toggleVoiceMode}
+              onClick={openConversationMode}
               disabled={!isSpeechSupported}
               size="icon"
-              className={`h-[52px] w-[52px] rounded-xl transition-all duration-300 ${
-                voiceMode
-                  ? "bg-mirror-glow text-mirror-depth"
-                  : "bg-mirror-surface/80 text-text-primary hover:bg-mirror-surface border border-border"
-              }`}
+              className="h-[52px] w-[52px] rounded-xl border border-border bg-mirror-surface/80 text-text-primary transition-all duration-300 hover:bg-mirror-surface"
               title={
                 isSpeechSupported
-                  ? voiceMode
-                    ? "End voice conversation"
-                    : "Start voice conversation"
+                  ? "Start voice conversation"
                   : "Voice conversation not supported in this browser"
               }
             >
-              {voiceMode ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              <AudioLines className="h-5 w-5" />
             </Button>
             <Button
               type="submit"
@@ -321,6 +282,14 @@ export const MirrorChat = () => {
           </div>
         </form>
       </div>
+
+      {conversationMode && (
+        <ConversationMode
+          messages={messages}
+          onSend={sendMessage}
+          onClose={() => setConversationMode(false)}
+        />
+      )}
     </div>
   );
 };
