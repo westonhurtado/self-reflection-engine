@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Send, Mic } from "lucide-react";
+import { Send, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -10,91 +10,36 @@ export const MirrorChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [baseInput, setBaseInput] = useState("");
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
-  const isRecordingRef = useRef(false);
+  const voiceModeRef = useRef(false);
+  const messagesRef = useRef<Message[]>([]);
+  const finalTranscriptRef = useRef("");
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busyRef = useRef(false);
 
-  // Check if speech recognition is supported
-  const isSpeechSupported = typeof window !== "undefined" && 
-    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+  // Check if the browser supports the native speech APIs
+  const isSpeechSupported =
+    typeof window !== "undefined" &&
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) &&
+    "speechSynthesis" in window;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Keep isRecordingRef in sync
   useEffect(() => {
-    isRecordingRef.current = isRecording;
-  }, [isRecording]);
+    messagesRef.current = messages;
+  }, [messages]);
 
-  // Initialize speech recognition
-  useEffect(() => {
-    if (!isSpeechSupported) return;
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    recognition.onresult = (event: any) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
-
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        const text = result[0].transcript;
-        if (result.isFinal) {
-          finalTranscript += text;
-        } else {
-          interimTranscript += text;
-        }
-      }
-
-      const combined = (baseInput ? baseInput + " " : "") + finalTranscript + interimTranscript;
-      setInput(combined.trimStart());
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      setIsRecording(false);
-      
-      if (event.error === "not-allowed") {
-        toast.error("Microphone access denied. Please enable it in your browser settings.");
-      } else if (event.error !== "aborted") {
-        toast.error("Voice input failed. Try again or type instead.");
-      }
-    };
-
-    recognition.onend = () => {
-      // Auto-restart if still in recording mode
-      if (isRecordingRef.current) {
-        setTimeout(() => {
-          try {
-            recognitionRef.current?.start();
-          } catch (_) {
-            // Ignore "already started" errors
-          }
-        }, 150);
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
-    };
-  }, [isSpeechSupported, baseInput]);
-
-  const streamChat = async (userMessage: string) => {
+  const streamChat = useCallback(async (userMessage: string): Promise<string | null> => {
     const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mirror-chat`;
-    
+
     try {
       const resp = await fetch(CHAT_URL, {
         method: "POST",
@@ -102,22 +47,24 @@ export const MirrorChat = () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({ messages: [...messages, { role: "user", content: userMessage }] }),
+        body: JSON.stringify({
+          messages: [...messagesRef.current, { role: "user", content: userMessage }],
+        }),
       });
 
       if (!resp.ok) {
         const errorData = await resp.json().catch(() => ({}));
-        
+
         if (resp.status === 429) {
           toast.error("Please slow down. The mirror needs time to reflect.");
-          return;
+          return null;
         }
-        
+
         if (resp.status === 402) {
           toast.error("AI usage limit reached. Please add credits to continue.");
-          return;
+          return null;
         }
-        
+
         throw new Error(errorData.error || "Failed to connect");
       }
 
@@ -197,12 +144,199 @@ export const MirrorChat = () => {
           } catch {}
         }
       }
+
+      return assistantContent;
     } catch (e) {
       console.error(e);
       toast.error("Connection failed. Try again.");
       setMessages((prev) => prev.slice(0, -1));
+      return null;
     } finally {
       setIsLoading(false);
+    }
+  }, []);
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      setMessages((prev) => [...prev, { role: "user", content: text }]);
+      setIsLoading(true);
+      return streamChat(text);
+    },
+    [streamChat]
+  );
+
+  /* ---------- Voice conversation mode ---------- */
+
+  const stopSpeaking = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+  }, []);
+
+  const startListening = useCallback(() => {
+    if (!voiceModeRef.current) return;
+    try {
+      recognitionRef.current?.start();
+    } catch (_) {
+      /* already started */
+    }
+  }, []);
+
+  const speak = useCallback(
+    (text: string) => {
+      if (!voiceModeRef.current || !text.trim()) {
+        startListening();
+        return;
+      }
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onstart = () => setIsSpeaking(true);
+      const finish = () => {
+        setIsSpeaking(false);
+        busyRef.current = false;
+        startListening();
+      };
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      // Listen while speaking so the user can interrupt (barge-in)
+      startListening();
+      synth.speak(utterance);
+    },
+    [startListening]
+  );
+
+  const submitVoiceTurn = useCallback(async () => {
+    const text = finalTranscriptRef.current.trim();
+    finalTranscriptRef.current = "";
+    setLiveTranscript("");
+    if (!text || busyRef.current) return;
+
+    busyRef.current = true;
+    stopSpeaking();
+    const reply = await sendMessage(text);
+    if (!voiceModeRef.current) {
+      busyRef.current = false;
+      return;
+    }
+    if (reply) {
+      speak(reply);
+    } else {
+      busyRef.current = false;
+      startListening();
+    }
+  }, [sendMessage, speak, startListening, stopSpeaking]);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (!isSpeechSupported) return;
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => setIsListening(true);
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0].transcript;
+        if (result.isFinal) {
+          finalTranscriptRef.current = (finalTranscriptRef.current + " " + text).trim();
+        } else {
+          interim += text;
+        }
+      }
+
+      // Barge-in: the user started talking while the mirror was speaking
+      if ((interim.trim() || finalTranscriptRef.current) && window.speechSynthesis.speaking) {
+        stopSpeaking();
+        busyRef.current = false;
+      }
+
+      setLiveTranscript((finalTranscriptRef.current + " " + interim).trim());
+
+      // Auto-send after a short silence
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        if (voiceModeRef.current) submitVoiceTurn();
+      }, 1200);
+    };
+
+    recognition.onerror = (event: any) => {
+      if (event.error === "not-allowed") {
+        voiceModeRef.current = false;
+        setVoiceMode(false);
+        setIsListening(false);
+        toast.error("Microphone access denied. Please enable it in your browser settings.");
+      } else if (event.error !== "aborted" && event.error !== "no-speech") {
+        console.error("Speech recognition error:", event.error);
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      if (voiceModeRef.current) {
+        setTimeout(() => {
+          if (voiceModeRef.current) {
+            try {
+              recognitionRef.current?.start();
+            } catch (_) {
+              /* ignore */
+            }
+          }
+        }, 200);
+      }
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognitionRef.current?.abort();
+    };
+  }, [isSpeechSupported, stopSpeaking, submitVoiceTurn]);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      voiceModeRef.current = false;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const toggleVoiceMode = () => {
+    if (!isSpeechSupported) {
+      toast.error("Voice conversation isn't supported in this browser.");
+      return;
+    }
+
+    if (voiceModeRef.current) {
+      voiceModeRef.current = false;
+      setVoiceMode(false);
+      setLiveTranscript("");
+      finalTranscriptRef.current = "";
+      busyRef.current = false;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      stopSpeaking();
+      recognitionRef.current?.abort();
+      setIsListening(false);
+    } else {
+      voiceModeRef.current = true;
+      setVoiceMode(true);
+      finalTranscriptRef.current = "";
+      setLiveTranscript("");
+      startListening();
     }
   };
 
@@ -212,42 +346,13 @@ export const MirrorChat = () => {
 
     const userMessage = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setIsLoading(true);
-
-    await streamChat(userMessage);
+    await sendMessage(userMessage);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
-    }
-  };
-
-  const toggleVoiceInput = () => {
-    if (!isSpeechSupported || isLoading) {
-      if (!isSpeechSupported) {
-        toast.error("Voice input not supported in this browser.");
-      }
-      return;
-    }
-
-    if (isRecording) {
-      // Stop recording mode
-      setIsRecording(false);
-      recognitionRef.current?.stop();
-    } else {
-      // Start recording mode
-      try {
-        setBaseInput(input);
-        setIsRecording(true);
-        recognitionRef.current?.start();
-      } catch (error) {
-        console.error("Failed to start recognition:", error);
-        setIsRecording(false);
-        toast.error("Voice input failed. Try again or type instead.");
-      }
     }
   };
 
